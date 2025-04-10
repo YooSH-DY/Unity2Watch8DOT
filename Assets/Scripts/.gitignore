@@ -1,0 +1,6 @@
+# Unity 대용량 파일 무시 설정
+Library/PackageCache/
+*.dylib
+*.dll
+*.so
+Library/PackageCache/com.unity.burst/.Runtime/
