@@ -12,6 +12,7 @@ public class GameUIManager : MonoBehaviour
     // UI 텍스트 요소들
     public TextMeshProUGUI rollText;
     public TextMeshProUGUI yawText;
+    public TextMeshProUGUI pitchText;
     public TextMeshProUGUI fingerCountText;
     public TextMeshProUGUI speedText;
     public TextMeshProUGUI jumpStatusText; // 점프 상태 표시를 위한 새 텍스트 요소
@@ -98,6 +99,9 @@ public class GameUIManager : MonoBehaviour
             // 플레이어 컨트롤러의 Yaw 값 표시
             if (yawText != null)
                 yawText.text = $"Yaw: {playerController.currentYaw:F1}°";
+
+            if (pitchText != null)
+                pitchText.text = $"Pitch: {playerController.currentPitch:F1}°";
                 
             // 현재 속도 표시
             if (speedText != null)

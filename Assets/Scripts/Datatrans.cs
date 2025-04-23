@@ -20,9 +20,14 @@ public class DataTransServer : MonoBehaviour
         //string ip = "192.168.45.34"; //집
         string ip = "192.168.0.213"; // 연구실
         wss = new WebSocketServer($"ws://{ip}:{port}");
+        wss.AddWebSocketService<WatchDataTransBehavior>("/watch");
+        wss.AddWebSocketService<DOTDataTransBehavior>("/dot");
+        
+        // 기존 경로도 하위 호환성을 위해 유지 (선택사항)
         wss.AddWebSocketService<DataTransBehavior>("/");
+        
         wss.Start();
-        Debug.Log($"WebSocket 서버가 ws://{ip}:{port}/ 에서 시작되었습니다.");
+        Debug.Log($"WebSocket 서버가 ws://{ip}:{port}/watch, ws://{ip}:{port}/dot 에서 시작되었습니다.");
     }
 
     void OnApplicationQuit()
@@ -32,11 +37,15 @@ public class DataTransServer : MonoBehaviour
             wss.Stop();
         }
     }
+    
     void Update()
     {
-        // 메인 스레드에서 WebSocket 액션 실행
+        // 모든 처리기의 메인 스레드 액션 실행
         DataTransBehavior.ExecuteMainThreadActions();
+        WatchDataTransBehavior.ExecuteMainThreadActions();
+        DOTDataTransBehavior.ExecuteMainThreadActions();
     }
+    
     private string GetLocalIPAddress()
     {
         string localIP = "127.0.0.1";
@@ -60,6 +69,7 @@ public class DataTransServer : MonoBehaviour
     }
 }
 
+
 public class DataTransBehavior : WebSocketBehavior
 {
     // 이벤트 정의는 그대로 유지
@@ -73,18 +83,65 @@ public class DataTransBehavior : WebSocketBehavior
 
     // 스레드 안전한 큐 추가
     public static ConcurrentQueue<Action> mainThreadActions = new ConcurrentQueue<Action>();
-    
+    protected override void OnOpen()
+    {
+        Debug.Log("DataTransBehavior 클라이언트 연결됨!");
+    }
     protected override void OnMessage(MessageEventArgs e)
     {
         string message = e.Data;
-        if (message.StartsWith("DOT:"))
+        // --- JSON 형식의 dotSensorData 처리 ---
+        if (message.StartsWith("{") && message.Contains("\"type\":\"dotSensorData\""))
+        {
+            try
+            {
+                // deviceId 추출
+                var idMatch = Regex.Match(message, "\"deviceId\":\"(.*?)\"");
+                string deviceId = idMatch.Success ? idMatch.Groups[1].Value : "";
+
+                // mainThreadActions.Enqueue(() => {
+                //     Debug.Log($"DOT JSON 전체: {message}");
+                // });
+
+                if (deviceId == "DOT1")
+                {
+                    // DOT1 → Roll만 처리
+                    var rollMatch = Regex.Match(message, "\"r\":\"(-?\\d+\\.?\\d*)\"");
+                    if (rollMatch.Success && float.TryParse(rollMatch.Groups[1].Value, out float rollValue))
+                    {
+                        mainThreadActions.Enqueue(() => {
+                            OnNewRoll?.Invoke(rollValue);
+                            Debug.Log($"DOT1 Roll: {rollValue}°");
+                        });
+                    }
+                }
+                else if (deviceId == "DOT2")
+                {
+                    // DOT2 → Pitch만 처리
+                    var pitchMatch = Regex.Match(message, "\"p\":\"(-?\\d+\\.?\\d*)\"");
+                    if (pitchMatch.Success && float.TryParse(pitchMatch.Groups[1].Value, out float pitchValue))
+                    {
+                        mainThreadActions.Enqueue(() => {
+                            OnNewPitch?.Invoke(pitchValue);
+                            Debug.Log($"DOT2 Pitch: {pitchValue}°");
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                mainThreadActions.Enqueue(() =>
+                    Debug.LogError($"JSON DOT 파싱 실패: {ex.Message}, 데이터: {message}"));
+            }
+        }
+        else if (message.StartsWith("DOT:"))
         {
             try {
                 string data = message.Substring(4).Trim();
                 
-                // mainThreadActions.Enqueue(() => {
-                //     Debug.Log($"DOT 데이터 전체: {data}");
-                // });  
+                //   mainThreadActions.Enqueue(() => {
+                //       Debug.Log($"DOT 데이터 전체: {data}");
+                //   });  
 
                 // 정규표현식을 사용하여 r: 패턴 찾기
                 var rollMatch = Regex.Match(data, @"r:(-?\d+\.?\d*)");
@@ -130,9 +187,9 @@ public class DataTransBehavior : WebSocketBehavior
                         //Debug.Log($"Watch: Yaw 값(도): {yawValue}°");
                     });
                 }
-                // mainThreadActions.Enqueue(() => {
-                //     Debug.Log($"WAT CH 데이터 전체: {data}");
-                // });       
+                mainThreadActions.Enqueue(() => {
+                    Debug.Log($"123WATCH 데이터 전체: {data}");
+                });       
                 // 필요한 경우 roll과 pitch도 유사하게 파싱
                 var rollMatch = Regex.Match(data, @"r:(-?\d+\.?\d*)");
                 if (rollMatch.Success && float.TryParse(rollMatch.Groups[1].Value, out float rollValue))
@@ -156,6 +213,29 @@ public class DataTransBehavior : WebSocketBehavior
                     Debug.LogError($"WATCH 데이터 파싱 실패: {ex.Message}, 데이터: {message}"));
             }
         }
+        else if (message.StartsWith("{") && message.Contains("\"type\":\"watch\""))
+        {
+            try
+            {
+                // Watch에서는 Yaw만 사용
+                var yawMatch = Regex.Match(message, "\"y\":\"(-?\\d+\\.?\\d*)\"");
+                if (yawMatch.Success && float.TryParse(yawMatch.Groups[1].Value, out float yawValue))
+                {
+                    mainThreadActions.Enqueue(() => {
+                        OnNewYaw?.Invoke(yawValue);
+                        Debug.Log($"Watch Yaw: {yawValue}°");
+                    });
+                }
+                // mainThreadActions.Enqueue(() => {
+                //     Debug.Log($"WATCH JSON 전체: {message}");
+                // });
+            }
+            catch (Exception ex)
+            {
+                mainThreadActions.Enqueue(() =>
+                    Debug.LogError($"WATCH JSON 파싱 실패: {ex.Message}, 데이터: {message}"));
+            }
+        }
         else if (message.StartsWith("HAND:"))
         {
             try {
@@ -175,10 +255,86 @@ public class DataTransBehavior : WebSocketBehavior
         }
         else
         {
+            //  mainThreadActions.Enqueue(() => {
+            //     Debug.Log($"[WS Receive /] {message}");
+            // });
             // 처리되지 않은 메시지 형식
         }
     }
 
+    public static void ExecuteMainThreadActions()
+    {
+        // -- 변경 전 --
+//    int processCount = 0;
+//    while (processCount < 10 && mainThreadActions.TryDequeue(out var action))
+//    {
+//        try { action?.Invoke(); }
+//        catch (Exception ex) { Debug.LogError($"워치 액션 실행 중 오류: {ex.Message}"); }
+//        processCount++;
+//    }
+
+    // -- 변경 후: 큐에 남은 모든 액션을 처리하도록 제한 해제 --
+        while (mainThreadActions.TryDequeue(out var action))
+        {
+            try
+            {
+                action?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"워치 액션 실행 중 오류: {ex.Message}");
+            }
+        }
+    }
+}
+// 워치 데이터 전용 처리 클래스
+public class WatchDataTransBehavior : WebSocketBehavior
+{
+    // 요(Yaw) 전용 이벤트
+    public static event Action<float> OnNewYaw;
+    
+    // 스레드 안전한 큐
+    public static ConcurrentQueue<Action> mainThreadActions = new ConcurrentQueue<Action>();
+    
+    protected override void OnOpen()
+    {
+        Debug.Log("워치 클라이언트 연결됨!");
+    }
+    
+    protected override void OnMessage(MessageEventArgs e)
+    {
+        string message = e.Data;
+        Debug.Log($"[WATCH JSON] {message}");
+        
+        // 메시지 디버깅 로그 추가
+        // mainThreadActions.Enqueue(() => {
+        //     Debug.Log($"워치 메시지 수신: {message}");
+        // });
+        
+        if (message.StartsWith("W:"))
+        {
+            string data = message.Substring(2); // "W:" 제거
+            var matches = Regex.Matches(data, @"t:([\d\.]+),y:([\d\.\-]+)");
+            
+            if (matches.Count > 0)
+            {
+                var match = matches[0];
+                float yaw = float.Parse(match.Groups[2].Value);
+                
+                // UI 스레드에서 실행되도록 큐에 추가
+                mainThreadActions.Enqueue(() => {
+                    OnNewYaw?.Invoke(yaw);
+                    Debug.Log($"워치 Yaw: {yaw}°");
+                });
+            }
+        }
+        else if (message == "WATCH_SESSION_START" || message == "WATCH_SESSION_END")
+        {
+            Debug.Log($"워치 세션 이벤트: {message}");
+        }
+    }
+    
+    // 메인 스레드 액션 실행 메소드
     public static void ExecuteMainThreadActions()
     {
         int processCount = 0;
@@ -190,7 +346,99 @@ public class DataTransBehavior : WebSocketBehavior
             }
             catch (Exception ex)
             {
-                Debug.LogError($"액션 실행 중 오류: {ex.Message}");
+                Debug.LogError($"워치 액션 실행 중 오류: {ex.Message}");
+            }
+            processCount++;
+        }
+    }
+}
+
+// DOT 데이터 전용 처리 클래스
+public class DOTDataTransBehavior : WebSocketBehavior
+{
+    // 롤(Roll) 전용 이벤트
+    public static event Action<float> OnNewRoll;
+    
+    // 스레드 안전한 큐
+    public static ConcurrentQueue<Action> mainThreadActions = new ConcurrentQueue<Action>();
+    
+    protected override void OnOpen()
+    {
+        Debug.Log("DOT 클라이언트 연결됨!");
+    }
+    
+    protected override void OnMessage(MessageEventArgs e)
+    {
+        string message = e.Data;
+        Debug.Log($"[WS Receive DOT] {message}");
+        
+        // JSON 형식 처리 (새로 추가)
+        if (message.StartsWith("{") && message.Contains("\"type\":\"dotSensorData\""))
+        {
+            try
+            {
+                mainThreadActions.Enqueue(() => {
+                    Debug.Log($"DOT 데이터 전체: {message}");
+                });
+                
+                // Roll 값 추출
+                var rollMatch = Regex.Match(message, "\"r\":(-?\\d+\\.?\\d*)");
+                if (rollMatch.Success && float.TryParse(rollMatch.Groups[1].Value, out float rollValue))
+                {
+                    mainThreadActions.Enqueue(() => {
+                        OnNewRoll?.Invoke(rollValue);
+                        Debug.Log($"DOT Roll: {rollValue}°");
+                    });
+                }
+                
+                // Yaw와 Pitch도 추출
+                var yawMatch = Regex.Match(message, "\"y\":(-?\\d+\\.?\\d*)");
+                if (yawMatch.Success && float.TryParse(yawMatch.Groups[1].Value, out float yawValue))
+                {
+                    mainThreadActions.Enqueue(() => {
+                        Debug.Log($"DOT Yaw: {yawValue}°");
+                    });
+                }
+                
+                var pitchMatch = Regex.Match(message, "\"p\":(-?\\d+\\.?\\d*)");
+                if (pitchMatch.Success && float.TryParse(pitchMatch.Groups[1].Value, out float pitchValue))
+                {
+                    mainThreadActions.Enqueue(() => {
+                        Debug.Log($"DOT Pitch: {pitchValue}°");
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                mainThreadActions.Enqueue(() => 
+                    Debug.LogError($"JSON DOT 데이터 파싱 실패: {ex.Message}, 데이터: {message}"));
+            }
+        }
+        // 기존 "DOT:" 처리 코드 유지
+        else if (message.StartsWith("DOT:"))
+        {
+            // 기존 코드
+        }
+        else if (message == "DOT_SESSION_START" || message == "DOT_SESSION_END")
+        {
+            Debug.Log($"DOT 세션 이벤트: {message}");
+        }
+    
+    }
+    
+    // 메인 스레드 액션 실행 메소드
+    public static void ExecuteMainThreadActions()
+    {
+        int processCount = 0;
+        while (processCount < 10 && mainThreadActions.TryDequeue(out var action))
+        {
+            try
+            {
+                action?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"DOT 액션 실행 중 오류: {ex.Message}");
             }
             processCount++;
         }

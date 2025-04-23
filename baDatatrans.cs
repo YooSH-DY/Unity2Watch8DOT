@@ -16,8 +16,9 @@ public class DataTransServer : MonoBehaviour
     private WebSocketServer wss;
 
     void Start()
-    {
-        string ip = GetLocalIPAddress();
+    {   
+        //string ip = "192.168.45.34"; //집
+        string ip = "192.168.0.213"; // 연구실
         wss = new WebSocketServer($"ws://{ip}:{port}");
         wss.AddWebSocketService<DataTransBehavior>("/");
         wss.Start();
@@ -72,32 +73,36 @@ public class DataTransBehavior : WebSocketBehavior
 
     // 스레드 안전한 큐 추가
     public static ConcurrentQueue<Action> mainThreadActions = new ConcurrentQueue<Action>();
-
+    
     protected override void OnMessage(MessageEventArgs e)
     {
         string message = e.Data;
-        if (message.StartsWith("GYRO:"))
-        {
-            string valueStr = message.Substring(5).Trim();
-            if (float.TryParse(valueStr, out float gyroValue))
-            {
-                OnNewGyroZ?.Invoke(gyroValue);
-            }
-        }
-        else if (message.StartsWith("DOT:"))
+        if (message.StartsWith("DOT:"))
         {
             try {
                 string data = message.Substring(4).Trim();
                 
-                string[] parts = data.Split(',');
-                
-                // Roll - 인덱스 7 (변경됨)
-                if (parts.Length >= 8 && float.TryParse(parts[7].Trim(), out float rollValue))
+                // mainThreadActions.Enqueue(() => {
+                //     Debug.Log($"DOT 데이터 전체: {data}");
+                // });  
+
+                // 정규표현식을 사용하여 r: 패턴 찾기
+                var rollMatch = Regex.Match(data, @"r:(-?\d+\.?\d*)");
+                if (rollMatch.Success && float.TryParse(rollMatch.Groups[1].Value, out float rollValue))
                 {
                     mainThreadActions.Enqueue(() => {
                         OnNewRoll?.Invoke(rollValue);
                         //Debug.Log($"DOT: Roll 값(도): {rollValue}°");
                     });
+                }
+                
+                // 필요할 경우 다른 값들도 유사하게 파싱 가능
+                // 예: 시간(t) 값 파싱
+                var timeMatch = Regex.Match(data, @"t:(\d+\.?\d*)");
+                if (timeMatch.Success)
+                {
+                    // 필요 시 시간 값 처리
+                    // float timeValue = float.Parse(timeMatch.Groups[1].Value);
                 }
             }
             catch (Exception ex)
@@ -106,19 +111,42 @@ public class DataTransBehavior : WebSocketBehavior
                     Debug.LogError($"DOT 데이터 파싱 실패: {ex.Message}, 데이터: {message}"));
             }
         }
-        else if (message.StartsWith("WATCH:"))
+        // DataTransBehavior 클래스의 OnMessage 메소드 내 W: 처리 부분 수정
+        else if (message.StartsWith("W:"))
         {
             try
             {
-                string data = message.Substring(6).Trim(); // "WATCH:" 제거
-                string[] parts = data.Split(',');
+                string data = message.Substring(2).Trim(); // "W:" 제거
                 
-                // 인덱스 확인 - 마지막 항목(인덱스 9)이 Yaw 값
-                if (parts.Length >= 10 && float.TryParse(parts[9].Trim(), out float yawValue))
+                // 새로운 형식 파싱
+                float yawValue = 0;
+                
+                // "y:값" 패턴 찾기
+                var yawMatch = Regex.Match(data, @"y:(-?\d+\.?\d*)");
+                if (yawMatch.Success && float.TryParse(yawMatch.Groups[1].Value, out yawValue))
                 {
                     mainThreadActions.Enqueue(() => {
                         OnNewYaw?.Invoke(yawValue);
-                        Debug.Log($"Watch: Yaw 값(도): {yawValue}°");
+                        //Debug.Log($"Watch: Yaw 값(도): {yawValue}°");
+                    });
+                }
+                // mainThreadActions.Enqueue(() => {
+                //     Debug.Log($"WAT CH 데이터 전체: {data}");
+                // });       
+                // 필요한 경우 roll과 pitch도 유사하게 파싱
+                var rollMatch = Regex.Match(data, @"r:(-?\d+\.?\d*)");
+                if (rollMatch.Success && float.TryParse(rollMatch.Groups[1].Value, out float rollValue))
+                {
+                    mainThreadActions.Enqueue(() => {
+                        OnNewRoll?.Invoke(rollValue);
+                    });
+                }
+                
+                var pitchMatch = Regex.Match(data, @"p:(-?\d+\.?\d*)");
+                if (pitchMatch.Success && float.TryParse(pitchMatch.Groups[1].Value, out float pitchValue))
+                {
+                    mainThreadActions.Enqueue(() => {
+                        OnNewPitch?.Invoke(pitchValue);
                     });
                 }
             }

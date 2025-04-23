@@ -135,7 +135,10 @@ public class PlayerController : MonoBehaviour
     private float confirmedYaw = 0f; // 확정된 yaw 값
     private const float yawStableHoldTime = 0.1f;
     private const float yawStableThreshold = 0.5f; // 두 값의 차이가 이보다 작으면 "안정"으로 간주
-
+        public float currentPitch = 0f;
+    private float smoothedPitch = 0f;
+    private float pitchSmoothness = 0.3f; // Roll과 같은 스무딩 계수 사용
+    
     // Yaw 관련 내부 변수
     public float currentYaw = 0f;
     private float smoothedYaw = 0f;
@@ -264,23 +267,23 @@ public class PlayerController : MonoBehaviour
     // 데이터 수신 시작 메서드 추가
     private void StartDataSubscription()
     {
-        // Roll 데이터 구독 추가
+        // 기존 구독
         DataTransBehavior.OnNewRoll += (value) => {
             UpdateRollData(value);
-            //Debug.Log($"Roll 값 수신: {value:F1}°");
         };
-        
-        // Watch의 Yaw 데이터 구독
         DataTransBehavior.OnNewYaw += (value) => {
             yawQueue.Enqueue(value);
-            //Debug.Log($"Yaw 값 수신: {value}");
         };
-        
-        // 핸드 제스처 데이터 구독 (필요한 경우)
-        // DataTransBehavior.OnNewHandGesture += (fingerCount, palmOrientation) => {
-        //     // 손가락 데이터 처리
-        // };
-        
+        DataTransBehavior.OnNewPitch += (value) => {
+            UpdatePitchData(value);
+        };
+        // 추가: 각 세션별 이벤트도 구독
+        DOTDataTransBehavior.OnNewRoll += (value) => {
+            UpdateRollData(value);
+        };
+        WatchDataTransBehavior.OnNewYaw += (value) => {
+            yawQueue.Enqueue(value);
+        };
         Debug.Log("웨어러블 센서 데이터 수신을 시작합니다.");
     }
     // 추가: 주기적으로 원형 이동 시도 메소드
@@ -465,7 +468,35 @@ public class PlayerController : MonoBehaviour
         // 애니메이션 속도 업데이트
         UpdateAnimationSpeed(); 
     }
+    // Pitch 데이터 업데이트 메서드 추가
+    private void UpdatePitchData(float newPitchValue)
+    {
+        Debug.Log($"UpdatePitchData 호출됨: {newPitchValue}°");
+        // 이전 값 저장
+        float previousPitch = currentPitch;
 
+        // 스무딩 적용
+        smoothedPitch = Mathf.Lerp(smoothedPitch, newPitchValue, pitchSmoothness);
+        
+        // 노이즈 제거 (Roll과 유사하게 처리)
+        float pitchNoiseThreshold = 1.0f;
+        if (Mathf.Abs(smoothedPitch - previousPitch) < pitchNoiseThreshold)
+        {
+            // 값 유지
+            smoothedPitch = previousPitch;
+        }
+
+        currentPitch = smoothedPitch;
+
+        // 매우 작은 값은 0으로 처리
+        if (Mathf.Abs(currentPitch) < 0.5f)
+        {
+            currentPitch = 0f;
+        }
+        
+        // 디버그 로그 (필요 시 주석 해제)
+        // Debug.Log($"Pitch 각도 업데이트: {currentPitch:F1}°");
+    }
     // UpdateAnimationSpeed 메서드 수정
     private void UpdateAnimationSpeed()
     {
